@@ -55,3 +55,62 @@ schedule:
   cron: 0 2 * * *
   timezone: America/Chicago
 ```
+
+## WebApp
+
+Model is deployed as a webapp using FastAPI
+
+
+Creating virtual environment
+```bash
+cd webapp
+pipenv install
+pipenv shell
+```
+
+Run webapp
+```bash
+# Activate virtual env
+# uvicorn predict:app --reload
+gunicorn -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8090 predict:app
+```
+
+Request Body
+```json
+{
+  "HourlyDryBulbTemperature": 81,
+  "LastHourDryBulbTemperature": 82,
+  "HourlyPrecipitation": 0,
+  "HourlyWindSpeed": 8
+}
+```
+
+CURL Request
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/predict' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "HourlyDryBulbTemperature": 81,
+  "LastHourDryBulbTemperature": 82,
+  "HourlyPrecipitation": 0,
+  "HourlyWindSpeed": 8
+}'
+```
+
+Response
+```json
+{
+  "predicted": 81
+}
+```
+
+## Unit Testing
+
+pytest - unit testing for the predict prepare features function
+
+```bash
+# Activate virtual env
+pytest test/test_unit.py
+```
