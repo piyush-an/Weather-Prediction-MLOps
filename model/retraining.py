@@ -1,22 +1,24 @@
+import logging
+import os
+import random
+import sys
+import mlflow
+from datetime import datetime, timedelta
+
+import mlflow
 import numpy as np
 import pandas as pd
-import random
-import mlflow
-import os
-import sys
-import logging
-from datetime import datetime, timedelta
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
 import xgboost as xgb
-from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
 from hyperopt.pyll import scope
-from mlflow.tracking import MlflowClient
 from mlflow.entities import ViewType
-from prefect import flow, task, get_run_logger
-from prefect.task_runners import SequentialTaskRunner
+from mlflow.tracking import MlflowClient
+from prefect import flow, get_run_logger, task
 from prefect.deployments import Deployment
-from prefect.orion.schemas.schedules import IntervalSchedule, CronSchedule
+from prefect.orion.schemas.schedules import CronSchedule, IntervalSchedule
+from prefect.task_runners import SequentialTaskRunner
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import train_test_split
 
 abspath = os.path.abspath(__file__)
 dname = os.path.dirname(abspath)
@@ -43,9 +45,18 @@ def read_input_data(file_path):
     df['LastHourDryBulbTemperature'] = df['HourlyDryBulbTemperature'].shift(1)
     return df
 
+
 @task(name="clean_df")
 def clean_df(df):
-    df = df[['DATE', 'HourlyDryBulbTemperature', 'LastHourDryBulbTemperature', 'HourlyPrecipitation','HourlyWindSpeed']]
+    df = df[
+        [
+            'DATE',
+            'HourlyDryBulbTemperature',
+            'LastHourDryBulbTemperature',
+            'HourlyPrecipitation',
+            'HourlyWindSpeed',
+        ]
+    ]
     df.dropna(inplace=True)
     df = df[~df.isin(["*", "VRB", "T"]).any(axis=1)]
     df.reset_index(drop=True, inplace=True)
@@ -73,7 +84,7 @@ def train_val_df_split(df):
     X = df.drop('HourlyDryBulbTemperature', axis=1)
     Y = df['HourlyDryBulbTemperature']
     x_train, x_val, y_train, y_val = train_test_split(X, Y, test_size=0.2)
-    
+
     return x_train, x_val, y_train, y_val
 
 
@@ -84,9 +95,11 @@ def test_df_split(df):
     Y = df['HourlyDryBulbTemperature']
     return X, Y
 
+
 @task(name="train_model")
 def train_model(train, valid, y_val):
     booster = mlflow.pyfunc.load_model(f"models:/{MODEL_REGISTER_NAME}/Production")
+
     def objective(params):
         with mlflow.start_run():
             mlflow.set_tag("developer", "Piyush")
@@ -94,18 +107,19 @@ def train_model(train, valid, y_val):
             mlflow.set_tag("columns", "5")
             mlflow.set_tag("model", "xgboost")
             mlflow.log_params(params)
-            nonlocal booster 
+            nonlocal booster
             booster = xgb.train(
                 params=params,
                 dtrain=train,
                 num_boost_round=100,
                 evals=[(valid, 'HourlyDryBulbTemperature')],
-                early_stopping_rounds=50
+                early_stopping_rounds=50,
             )
             y_pred = booster.predict(valid)
             rmse = mean_squared_error(y_val, y_pred, squared=False)
             mlflow.log_metric("RMSE", rmse)
         return {'loss': rmse, 'status': STATUS_OK}
+
     search_space = {
         'max_depth': scope.int(hp.quniform('max_depth', 4, 100, 1)),
         'learning_rate': hp.loguniform('learning_rate', -3, 0),
@@ -113,14 +127,14 @@ def train_model(train, valid, y_val):
         'reg_lambda': hp.loguniform('reg_lambda', -6, -1),
         'min_child_weight': hp.loguniform('min_child_weight', -1, 3),
         'objective': 'reg:linear',
-        'seed': 42
+        'seed': 42,
     }
     best_result = fmin(
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
         max_evals=25,
-        trials=Trials()
+        trials=Trials(),
     )
     return
 
@@ -134,14 +148,14 @@ def calculate_RMSE(x_test, y_test, stage):
 
 @task(name="find_para_best_exp")
 def find_para_best_exp():
-        runs = client.search_runs(
-                        experiment_ids='1',
-                        run_view_type=ViewType.ACTIVE_ONLY,
-                        max_results=1,
-                        order_by=["metrics.RMSE ASC"]
-                        )
-        return runs[0].data.params
-    
+    runs = client.search_runs(
+        experiment_ids='1',
+        run_view_type=ViewType.ACTIVE_ONLY,
+        max_results=1,
+        order_by=["metrics.RMSE ASC"],
+    )
+    return runs[0].data.params
+
 
 @task(name="retrain_with_best_param")
 def retrain_with_best_param(train, valid, y_val, params):
@@ -152,7 +166,7 @@ def retrain_with_best_param(train, valid, y_val, params):
             dtrain=train,
             num_boost_round=100,
             evals=[(valid, 'validation')],
-            early_stopping_rounds=50
+            early_stopping_rounds=50,
         )
         y_pred = booster.predict(valid)
         rmse = mean_squared_error(y_val, y_pred, squared=False)
@@ -175,12 +189,12 @@ def move_model_to_staging(stagged_model_name, stagged_model_version):
         name=stagged_model_name,
         version=stagged_model_version,
         stage='Staging',
-        archive_existing_versions=True
+        archive_existing_versions=True,
     )
     output = client.update_model_version(
         name=latest_versions[-1].name,
         version=latest_versions[-1].version,
-        description=f"The model version {latest_versions[-1].version} was transitioned to Staging on {datetime.today().date()}"
+        description=f"The model version {latest_versions[-1].version} was transitioned to Staging on {datetime.today().date()}",
     )
     return output
 
@@ -191,8 +205,9 @@ def move_staging_to_production(model_version):
         name=MODEL_REGISTER_NAME,
         version=model_version,
         stage="Production",
-        archive_existing_versions=True
+        archive_existing_versions=True,
     )
+
 
 @task(name="retrain_model")
 def retrain_model(train, valid, y_val, stage: str = "Production"):
@@ -204,18 +219,18 @@ def retrain_model(train, valid, y_val, stage: str = "Production"):
         mlflow.set_tag("columns", "5")
         mlflow.set_tag("model", "xgboost")
         booster = xgb.train(
-                params=params,
-                dtrain=train,
-                num_boost_round=100,
-                evals=[(valid, 'HourlyDryBulbTemperature')],
-                early_stopping_rounds=50
-                )
+            params=params,
+            dtrain=train,
+            num_boost_round=100,
+            evals=[(valid, 'HourlyDryBulbTemperature')],
+            early_stopping_rounds=50,
+        )
         y_pred = booster.predict(valid)
         rmse = mean_squared_error(y_val, y_pred, squared=False)
         mlflow.log_metric("RMSE", rmse)
         mlflow.xgboost.log_model(booster, artifact_path="model")
         return mlflow.active_run().info.run_id, rmse
-    
+
 
 # MLflow Flow
 @flow(task_runner=SequentialTaskRunner())
@@ -230,7 +245,11 @@ def main():
     train = xgb.DMatrix(x_train, label=y_train)
     valid = xgb.DMatrix(x_val, label=y_val)
     candidate_model_run_id, candidate_model_rmse = retrain_model(train, valid, y_val)
-    stagged_model_run_id, stagged_model_name, stagged_model_version = push_to_model_register(candidate_model_run_id)
+    (
+        stagged_model_run_id,
+        stagged_model_name,
+        stagged_model_version,
+    ) = push_to_model_register(candidate_model_run_id)
     move_model_to_staging(stagged_model_name, stagged_model_version)
     x_test, y_test = test_df_split(df2)
     RMSE_Production = calculate_RMSE(x_test, y_test, "Production")

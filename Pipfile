@@ -4,15 +4,22 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+fastapi = "*"
 pandas = "*"
-numpy = "*"
-sklearn = "*"
+uvicorn = "*"
 mlflow = "*"
+pyarrow = "*"
 xgboost = "*"
+sklearn = "*"
 hyperopt = "*"
 prefect = "==2.1.0"
 
 [dev-packages]
+pytest = "*"
+pylint = "*"
+black = "*"
+isort = "*"
+pre-commit = "*"
 
 [requires]
 python_version = "3.9"

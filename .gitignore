@@ -137,3 +137,5 @@ model/main-deployment.yaml
 model/mlflow.db
 
 model/sandbox.ipynb
+
+webapp/test_integraton/*
