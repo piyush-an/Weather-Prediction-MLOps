@@ -1,9 +1,7 @@
 import os
 import pandas as pd
 import mlflow
-from fastapi import FastAPI, HTTPException, Response, status, Query, Request
-from fastapi.responses import HTMLResponse
-import json
+from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
 
 abspath = os.path.abspath(__file__)
